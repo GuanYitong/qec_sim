@@ -15,5 +15,3 @@ qec_sim/
     04_stabilizer_framework.ipynb
     05_surface_code_d3.ipynb
   qec_utils/          # 公共工具（噪声、测量、可视化）
-
-try
