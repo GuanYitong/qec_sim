@@ -108,3 +108,4 @@ if __name__ == "__main__":
     for e in errors:
         syn = code.syndrome(e)
         print(f"error {e} -> syndrome {syn}")
+        
