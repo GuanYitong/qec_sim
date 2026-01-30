@@ -13,6 +13,9 @@ from .stim_circuit import (
     build_surface_code_circuit,
     circuit_text,
     circuit_ascii_diagram,
+    draw_chip_topology, 
+    chip_topology_from_circuit, 
+    qubit_coords_from_circuit
 )
 
 from .stim_dem import (

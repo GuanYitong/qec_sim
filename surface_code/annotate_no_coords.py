@@ -322,7 +322,7 @@ def explain_shot_on_matchgraph(
         pos=stim_pos,
         fired=fired,
         highlight_edges=highlight,
-        injected_edge=(u, v),
+        injected_edge= None,
         title="Matchgraph (stim coords): injected error-event → fired detectors → MWPM correction",
     )
 
@@ -395,16 +395,61 @@ def demo_syndrome_on_matchgraph(
         pairs = []
 
     # 6) convert pairs -> highlight edges along graph shortest paths (reuse your existing logic)
+    def _canon_node(n):
+        # pymatching 用 -1 表示 boundary；你图里用 "B"
+        return "B" if n == -1 else n
     highlight_edges = []
     for u, v in pairs:
-        if u == v:
+        u = _canon_node(u)
+        v = _canon_node(v)
+
+        # 如果图里没有 boundary 节点（或某节点不存在），就跳过，别让 demo 炸
+        if u not in G or v not in G:
             continue
-        # your existing shortest-path highlighter probably already exists;
-        # otherwise do nx.shortest_path and append edges
+
+        # 有些图可能不连通，避免 shortest_path 再炸一次
+        if not nx.has_path(G, u, v):
+            continue
+
+    highlight_edges = []
+    skip_missing = 0
+    skip_nopath = 0
+    use = 0
+    for u, v in pairs:
+        u = _canon_node(u)
+        v = _canon_node(v)
+
+        if u not in G or v not in G:
+            continue
+        if not nx.has_path(G, u, v):
+            continue
+
         path = nx.shortest_path(G, u, v, weight="weight")
+
+#-----------DEBUG INFO----------------
+
+        if u not in G or v not in G:
+            skip_missing += 1
+            continue
+        if not nx.has_path(G, u, v):
+            skip_nopath += 1
+            continue
+        use += 1
+#-----------DEBUG INFO----------------
+
+        # 画整条 MWPM correction（绿），并把 logical-crossing 段标红（覆盖）
         for a, b in zip(path, path[1:]):
-            # color policy: all correction edges as "red" (or "green"/"red" if you track logical crossing)
-            highlight_edges.append((a, b, "red"))
+            # boundary 段目前不画
+            if a == "B" or b == "B":
+                continue
+
+            # 1) 默认：普通纠错边（绿）
+            highlight_edges.append((int(a), int(b), "green"))
+
+            # 2) 如果这条边会翻转 logical observable L0：再画一遍红色（logical-crossing）
+            flips_obs0 = (G[a][b].get("obs_mask", 0) & 1) != 0
+            if flips_obs0:
+                highlight_edges.append((int(a), int(b), "red"))
 
     if title is None:
         title = f"Matchgraph (syndrome-level): shot={shot}, fired={len(fired)}"
@@ -418,7 +463,17 @@ def demo_syndrome_on_matchgraph(
         injected_edge=None,
         title=title,
     )
+    #---------------DEBUG INFO----------------
+    print("num fired =", len(fired), "num mwpm pairs =", len(pairs), "num highlight edges =", len(highlight_edges))
+    n_green = sum(1 for _,_,c in highlight_edges if c=="green")
+    n_red   = sum(1 for _,_,c in highlight_edges if c=="red")
+    print("edges:", "green=", n_green, "red(logical)=", n_red)
 
+
+    print("pairs used:", use, "skip_missing:", skip_missing, "skip_nopath:", skip_nopath)
+
+
+    #---------------RETURN DATA----------------
     return {
         "fired": fired,
         "pairs": pairs,

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Literal
+from typing import Dict, Tuple, Set, Iterable, Optional
+import math
 
 import stim
 
@@ -51,3 +53,166 @@ def circuit_text(params: SurfaceCodeParams) -> str:
 def circuit_ascii_diagram(circuit: stim.Circuit) -> str:
     """ASCII timing diagram."""
     return str(circuit.diagram())
+
+def _iter_instructions(c: stim.Circuit) -> Iterable[stim.CircuitInstruction]:
+    """Flattened iterator over circuit instructions (handles REPEAT blocks)."""
+    for inst in c:
+        if isinstance(inst, stim.CircuitRepeatBlock):
+            body = inst.body_copy()
+            for _ in range(inst.repeat_count):
+                yield from _iter_instructions(body)
+        else:
+            yield inst
+
+
+def qubit_coords_from_circuit(c: stim.Circuit) -> Dict[int, Tuple[float, float]]:
+    """
+    Extract 2D coordinates from QUBIT_COORDS instructions.
+    Returns: {qubit_index: (x, y)}
+    """
+    coords: Dict[int, Tuple[float, float]] = {}
+    for inst in _iter_instructions(c):
+        if inst.name != "QUBIT_COORDS":
+            continue
+        args = list(inst.gate_args_copy())
+        tgs = list(inst.targets_copy())
+        if len(args) < 2:
+            continue
+        x, y = float(args[0]), float(args[1])
+        for t in tgs:
+            # QUBIT_COORDS targets are qubits
+            try:
+                q = int(t.value)
+            except Exception:
+                continue
+            coords[q] = (x, y)
+    return coords
+
+
+def chip_topology_from_circuit(
+    c: stim.Circuit,
+    *,
+    include_noise_edges: bool = False,
+) -> Tuple[Set[Tuple[int, int]], Dict[int, Tuple[float, float]]]:
+    """
+    Build an (undirected) coupling graph from 2-qubit operations in the circuit.
+
+    Returns:
+      edges: set of (i, j) with i < j
+      coords: {qubit: (x, y)} from QUBIT_COORDS (may be empty)
+    """
+    coords = qubit_coords_from_circuit(c)
+
+    # A conservative list: treat these as "real 2q interactions" (not noise).
+    twoq_gates = {
+        "CX", "CZ", "CY",
+        "XCX", "YCX", "ZCX",
+        "XCY", "YCY", "ZCY",
+        "XCZ", "YCZ", "ZCZ",
+        "SWAP", "ISWAP",
+        "MXX", "MYY", "MZZ",
+        "XX", "YY", "ZZ",
+    }
+    noise_twoq = {"DEPOLARIZE2", "PAULI_CHANNEL_2"}  # optional
+
+    edges: Set[Tuple[int, int]] = set()
+
+    for inst in _iter_instructions(c):
+        name = inst.name
+        if name in noise_twoq and not include_noise_edges:
+            continue
+        if name not in twoq_gates and (not include_noise_edges or name not in noise_twoq):
+            continue
+
+        tgs = list(inst.targets_copy())
+        # many 2q ops come as pairs: (q1, q2), (q3, q4), ...
+        # skip non-qubit targets defensively
+        qs: list[int] = []
+        for t in tgs:
+            # only accept qubit targets (ignore rec[-k], sweep bits, etc.)
+            # In stim, qubits have target.is_qubit_target == True in newer versions;
+            # for compatibility, we try to read .is_qubit_target if present.
+            if hasattr(t, "is_qubit_target"):
+                if not t.is_qubit_target:
+                    continue
+            # boundary/other targets shouldn't appear here; guard anyway
+            try:
+                qs.append(int(t.value))
+            except Exception:
+                continue
+
+        for a, b in zip(qs[0::2], qs[1::2]):
+            if a == b:
+                continue
+            i, j = (a, b) if a < b else (b, a)
+            edges.add((i, j))
+
+    return edges, coords
+
+
+def draw_chip_topology(
+    c: stim.Circuit,
+    *,
+    include_noise_edges: bool = False,
+    with_labels: bool = True,
+    ax=None,
+    figsize=(6, 6),
+    node_size: int = 60,
+    linewidth: float = 1.2,
+):
+    """
+    Draw coupling graph using matplotlib.
+
+    - Uses QUBIT_COORDS for layout when present.
+    - If coords missing, falls back to a simple circular layout.
+    """
+    edges, coords = chip_topology_from_circuit(c, include_noise_edges=include_noise_edges)
+
+    # collect nodes from coords + edges
+    nodes: Set[int] = set(coords.keys())
+    for a, b in edges:
+        nodes.add(a)
+        nodes.add(b)
+    nodes = set(sorted(nodes))
+
+    if not nodes:
+        raise ValueError("No qubits found in circuit (cannot draw topology).")
+
+    # fallback layout if no coords
+    if not coords:
+        # simple circle layout
+        n = len(nodes)
+        node_list = sorted(nodes)
+        for idx, q in enumerate(node_list):
+            ang = 2 * math.pi * idx / max(1, n)
+            coords[q] = (math.cos(ang), math.sin(ang))
+
+    import matplotlib.pyplot as plt
+
+    if ax is None:
+        fig, ax = plt.subplots(figsize=figsize)
+    else:
+        fig = ax.figure
+
+    # draw edges
+    for a, b in edges:
+        if a not in coords or b not in coords:
+            continue
+        (x1, y1), (x2, y2) = coords[a], coords[b]
+        ax.plot([x1, x2], [y1, y2], linewidth=linewidth, alpha=0.6)
+
+    # draw nodes
+    xs = [coords[q][0] for q in sorted(nodes)]
+    ys = [coords[q][1] for q in sorted(nodes)]
+    ax.scatter(xs, ys, s=node_size)
+
+    if with_labels:
+        for q in sorted(nodes):
+            x, y = coords[q]
+            ax.text(x, y, str(q), fontsize=9, ha="center", va="center")
+
+    ax.set_aspect("equal", adjustable="datalim")
+    ax.axis("off")
+    ax.set_title("Chip / Coupling Topology Graph")
+    fig.tight_layout()
+    return ax
