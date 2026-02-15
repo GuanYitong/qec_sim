@@ -16,6 +16,8 @@ Steane [[7,1,3]] 码的量子稳定子测量电路（Qiskit 实现）。
 
 from qiskit import QuantumCircuit, QuantumRegister, ClassicalRegister
 from typing import List, Optional
+import matplotlib.pyplot as plt
+from qiskit.visualization import plot_histogram
 
 
 class SteaneQuantumCode:
@@ -188,6 +190,10 @@ class SteaneQuantumCode:
 
         print("在 q2 上施加 X 错误后的综合征测量结果统计：")
         print(counts)
+
+        plot_histogram(counts)
+        plt.title("Steane Syndrome Histogram (X error on q2)")
+        plt.show()
         return counts
 
 
