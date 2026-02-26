@@ -1,0 +1,20 @@
+distance: 3
+rounds: 10
+shots: 10000
+basis: Z
+noise:
+  p: 0.001
+  model: after_clifford_depolarization + (optional) reset/measure flips + per-round
+    data depolarization
+stim_generator: surface_code:rotated_memory_z
+timestamp: '2026-02-26 09:49:12'
+files:
+  circuit_ideal: circuit_ideal.stim
+  circuit_noisy: circuit_noisy.stim
+  dem: circuit_detector_error_model.dem
+  layout: layout.svg
+  detection_events: detection_events.b8
+  measurements: measurements.b8
+  sweep: sweep.b8
+  obs_actual: obs_flips_actual.01
+  obs_pred_pymatching: obs_flips_predicted_by_pymatching.01
